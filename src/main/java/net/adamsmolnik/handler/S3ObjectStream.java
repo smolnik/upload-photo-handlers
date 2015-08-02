@@ -1,6 +1,7 @@
 package net.adamsmolnik.handler;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 
 import com.amazonaws.services.s3.AmazonS3;
@@ -74,7 +75,7 @@ public class S3ObjectStream {
 					}
 				}
 			}
-		} catch (Exception e) {
+		} catch (IOException e) {
 			throw new UploadPhotoHandlerException(e);
 		}
 		return new ByteArrayInputStream(imgAsBytes);

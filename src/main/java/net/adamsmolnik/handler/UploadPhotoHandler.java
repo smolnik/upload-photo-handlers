@@ -177,7 +177,7 @@ public class UploadPhotoHandler {
 	}
 
 	private String createDestKey(String srcKey, ZonedDateTime zdt, String uuid, String ext) {
-		return zdt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd-HH-mm-ss-A")) + "-" + uuid.hashCode() + "." + ext;
+		return zdt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd-HH-mm-ss-A")) + "-" + Integer.toHexString(uuid.hashCode()) + "." + ext;
 	}
 
 	private static MediaType detect(InputStream inputStream) {
