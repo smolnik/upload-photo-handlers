@@ -1,6 +1,5 @@
 package net.adamsmolnik.handler;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.time.Instant;
@@ -24,17 +23,12 @@ import com.amazonaws.services.dynamodbv2.AmazonDynamoDB;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
 import com.amazonaws.services.dynamodbv2.model.AttributeValue;
 import com.amazonaws.services.dynamodbv2.model.PutItemRequest;
-import com.amazonaws.services.lambda.runtime.ClientContext;
-import com.amazonaws.services.lambda.runtime.CognitoIdentity;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.LambdaLogger;
 import com.amazonaws.services.lambda.runtime.events.S3Event;
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3Client;
-import com.amazonaws.services.s3.event.S3EventNotification.S3BucketEntity;
-import com.amazonaws.services.s3.event.S3EventNotification.S3Entity;
-import com.amazonaws.services.s3.event.S3EventNotification.S3EventNotificationRecord;
-import com.amazonaws.services.s3.event.S3EventNotification.S3ObjectEntity;
+import com.amazonaws.services.s3.model.Region;
 
 import net.adamsmolnik.handler.exception.UploadPhotoHandlerException;
 import net.adamsmolnik.handler.model.ImageMetadata;
@@ -101,9 +95,23 @@ public class UploadPhotoHandler {
 
 	private static final String JPEG_EXT = "jpg";
 
-	private final AmazonS3 s3 = new AmazonS3Client();
+	private final ThreadLocal<AmazonS3> thS3 = new ThreadLocal<AmazonS3>() {
 
-	private final AmazonDynamoDB db = new AmazonDynamoDBClient();
+		@Override
+		protected AmazonS3 initialValue() {
+			return new AmazonS3Client();
+		}
+
+	};
+
+	private final ThreadLocal<AmazonDynamoDB> thDb = new ThreadLocal<AmazonDynamoDB>() {
+
+		@Override
+		protected AmazonDynamoDB initialValue() {
+			return new AmazonDynamoDBClient();
+		}
+
+	};
 
 	public void handle(S3Event s3Event, Context context) {
 		LambdaLogger logger = context.getLogger();
@@ -117,12 +125,14 @@ public class UploadPhotoHandler {
 				}
 			});
 		} finally {
+			thS3.get().setRegion(Region.US_Standard.toAWSRegion());
 			es.shutdownNow();
 		}
 
 	}
 
 	private void process(S3ObjectStream os, LambdaLogger logger, ExecutorService es) throws IOException {
+		final AmazonS3 s3 = thS3.get();
 		String srcBucket = os.getBucket();
 		String srcKey = os.getKey();
 		logger.log("File uploaded: " + os.getKey());
@@ -146,7 +156,7 @@ public class UploadPhotoHandler {
 			await(futures);
 			PutRequest pr = new PutRequest().withUserId(userId).withPrincipalId(os.getPrincipalId()).withPhotoKey(photoKey)
 					.withThumbnailKey(thumbnailKey).withZonedDateTime(zdt).withImageMetadata(imd);
-			db.putItem(createPutRequest(pr));
+			thDb.get().putItem(createPutRequest(pr));
 		} else {
 			s3.copyObject(srcBucket, srcKey, "upload-unidentified", srcKey);
 		}
@@ -187,68 +197,6 @@ public class UploadPhotoHandler {
 		} catch (IOException e) {
 			throw new UploadPhotoHandlerException(e);
 		}
-	}
-
-	public static void main(String[] args) throws Exception {
-		File file = new File("/photos/hiszpania2015/20150616_124937.jpg");
-		S3ObjectEntity s3ObjectEntity = new S3ObjectEntity(file.getName(), file.length(), null, null);
-		S3Entity s3Entity = new S3Entity(null, new S3BucketEntity("upload-photos-ext", null, null), s3ObjectEntity, null);
-		S3EventNotificationRecord record = new S3EventNotificationRecord(null, null, null, null, null, null, null, s3Entity, null);
-		S3Event s3Event = new S3Event(Arrays.asList(record));
-		new UploadPhotoHandler().handle(s3Event, new Context() {
-
-			@Override
-			public int getRemainingTimeInMillis() {
-				return 0;
-			}
-
-			@Override
-			public int getMemoryLimitInMB() {
-				return 0;
-			}
-
-			@Override
-			public LambdaLogger getLogger() {
-				return new LambdaLogger() {
-
-					@Override
-					public void log(String s) {
-						System.out.println(s);
-
-					}
-				};
-			}
-
-			@Override
-			public String getLogStreamName() {
-				return null;
-			}
-
-			@Override
-			public String getLogGroupName() {
-				return null;
-			}
-
-			@Override
-			public CognitoIdentity getIdentity() {
-				return null;
-			}
-
-			@Override
-			public String getFunctionName() {
-				return null;
-			}
-
-			@Override
-			public ClientContext getClientContext() {
-				return null;
-			}
-
-			@Override
-			public String getAwsRequestId() {
-				return null;
-			}
-		});
 	}
 
 }
