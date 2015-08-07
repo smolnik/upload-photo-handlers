@@ -64,12 +64,9 @@ public class S3ObjectStream {
 				synchronized (lock) {
 					if (imgAsBytes == null) {
 						imgAsBytes = new byte[(int) size];
-						byte[] buffer = new byte[8192];
 						InputStream is = s3.getObject(bucket, key).getObjectContent();
-						int length;
-						int pos = 0;
-						while ((length = is.read(buffer)) > 0) {
-							System.arraycopy(buffer, 0, imgAsBytes, pos, length);
+						int pos = 0, length;
+						while ((length = is.read(imgAsBytes, pos, imgAsBytes.length)) > 0) {
 							pos += length;
 						}
 					}
