@@ -28,7 +28,6 @@ import com.amazonaws.services.lambda.runtime.LambdaLogger;
 import com.amazonaws.services.lambda.runtime.events.S3Event;
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3Client;
-import com.amazonaws.services.s3.model.Region;
 
 import net.adamsmolnik.handler.exception.UploadPhotoHandlerException;
 import net.adamsmolnik.handler.model.ImageMetadata;
@@ -95,7 +94,7 @@ public class UploadPhotoHandler {
 
 	private static final String JPEG_EXT = "jpg";
 
-	private final ThreadLocal<AmazonS3> thS3 = new ThreadLocal<AmazonS3>() {
+	private static final ThreadLocal<AmazonS3> thlS3 = new ThreadLocal<AmazonS3>() {
 
 		@Override
 		protected AmazonS3 initialValue() {
@@ -104,7 +103,7 @@ public class UploadPhotoHandler {
 
 	};
 
-	private final ThreadLocal<AmazonDynamoDB> thDb = new ThreadLocal<AmazonDynamoDB>() {
+	private static final ThreadLocal<AmazonDynamoDB> thlDb = new ThreadLocal<AmazonDynamoDB>() {
 
 		@Override
 		protected AmazonDynamoDB initialValue() {
@@ -114,28 +113,27 @@ public class UploadPhotoHandler {
 	};
 
 	public void handle(S3Event s3Event, Context context) {
-		LambdaLogger logger = context.getLogger();
+		LambdaLogger log = context.getLogger();
 		ExecutorService es = Executors.newCachedThreadPool();
 		try {
 			s3Event.getRecords().forEach(record -> {
 				try {
-					process(new S3ObjectStream(record.getS3(), record.getUserIdentity()), logger, es);
+					process(new S3ObjectStream(record.getS3(), record.getUserIdentity()), log, es);
 				} catch (IOException e) {
 					throw new UploadPhotoHandlerException(e);
 				}
 			});
 		} finally {
-			thS3.get().setRegion(Region.US_Standard.toAWSRegion());
 			es.shutdownNow();
 		}
 
 	}
 
-	private void process(S3ObjectStream os, LambdaLogger logger, ExecutorService es) throws IOException {
-		final AmazonS3 s3 = thS3.get();
+	private void process(S3ObjectStream os, LambdaLogger log, ExecutorService es) throws IOException {
+		final AmazonS3 s3 = thlS3.get();
 		String srcBucket = os.getBucket();
 		String srcKey = os.getKey();
-		logger.log("File uploaded: " + os.getKey());
+		log.log("File uploaded: " + os.getKey());
 		MediaType mediaType = detect(os.newCachedInputStream());
 		if ("jpeg".equals(mediaType.getSubtype())) {
 			ImageMetadata imd = new ImageMetadataExplorer().explore(os.newCachedInputStream());
@@ -156,7 +154,7 @@ public class UploadPhotoHandler {
 			await(futures);
 			PutRequest pr = new PutRequest().withUserId(userId).withPrincipalId(os.getPrincipalId()).withPhotoKey(photoKey)
 					.withThumbnailKey(thumbnailKey).withZonedDateTime(zdt).withImageMetadata(imd);
-			thDb.get().putItem(createPutRequest(pr));
+			thlDb.get().putItem(createPutRequest(pr));
 		} else {
 			s3.copyObject(srcBucket, srcKey, "upload-unidentified", srcKey);
 		}
