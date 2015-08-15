@@ -40,52 +40,6 @@ import net.adamsmolnik.util.ImageResizer;
  */
 public class UploadPhotoHandler {
 
-	private static class PutRequest {
-
-		private String userId;
-
-		private String principalId;
-
-		private String photoKey;
-
-		private String thumbnailKey;
-
-		private ZonedDateTime zdt;
-
-		private ImageMetadata imd;
-
-		private PutRequest withUserId(String userId) {
-			this.userId = userId;
-			return this;
-		}
-
-		private PutRequest withPrincipalId(String principalId) {
-			this.principalId = principalId;
-			return this;
-		}
-
-		private PutRequest withPhotoKey(String photoKey) {
-			this.photoKey = photoKey;
-			return this;
-		}
-
-		private PutRequest withThumbnailKey(String thumbnailKey) {
-			this.thumbnailKey = thumbnailKey;
-			return this;
-		}
-
-		private PutRequest withZonedDateTime(ZonedDateTime zdt) {
-			this.zdt = zdt;
-			return this;
-		}
-
-		private PutRequest withImageMetadata(ImageMetadata imd) {
-			this.imd = imd;
-			return this;
-		}
-
-	}
-
 	private static final String DEST_BUCKET = "smolnik.photos";
 
 	private static final String KEY_PREFIX = "photos/";
