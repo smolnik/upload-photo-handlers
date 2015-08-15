@@ -94,6 +94,12 @@ public class UploadPhotoHandler {
 
 	private static final String JPEG_EXT = "jpg";
 
+	private static final DateTimeFormatter DT_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd-HH-mm-ss-A");
+
+	private static final int THUMBNAIL_SIZE = 300;
+
+	private static final int WEB_IMAGE_SIZE = 1080;
+
 	private static final ThreadLocal<AmazonS3> thlS3 = new ThreadLocal<AmazonS3>() {
 
 		@Override
@@ -140,16 +146,16 @@ public class UploadPhotoHandler {
 			ZonedDateTime zdt = ZonedDateTime.ofInstant(Instant.ofEpochMilli(imd.getPhotoTaken().getTime()), ZoneId.of("UTC"));
 			String userId = os.getUserId();
 			String userKeyPrefix = KEY_PREFIX + userId + "/";
-			String baseDestKey = createDestKey(srcKey, zdt, UUID.randomUUID().toString(), JPEG_EXT);
+			String baseDestKey = createDestKey(srcKey, zdt, JPEG_EXT);
 			String photoKey = userKeyPrefix + baseDestKey;
 			String thumbnailKey = userKeyPrefix + "thumbnails/" + baseDestKey;
 
 			List<Future<?>> futures = Arrays.<Future<?>> asList(es.submit(() -> {
 				s3.copyObject(srcBucket, srcKey, ARCH_BUCKET, photoKey);
 			}), es.submit(() -> {
-				s3.putObject(DEST_BUCKET, thumbnailKey, new ImageResizer(os.newCachedInputStream(), 300).resize());
+				s3.putObject(DEST_BUCKET, thumbnailKey, new ImageResizer(os.newCachedInputStream(), THUMBNAIL_SIZE).resize());
 			}), es.submit(() -> {
-				s3.putObject(DEST_BUCKET, photoKey, new ImageResizer(os.newCachedInputStream(), 1080).resize());
+				s3.putObject(DEST_BUCKET, photoKey, new ImageResizer(os.newCachedInputStream(), WEB_IMAGE_SIZE).resize());
 			}));
 			await(futures);
 			PutRequest pr = new PutRequest().withUserId(userId).withPrincipalId(os.getPrincipalId()).withPhotoKey(photoKey)
@@ -184,8 +190,8 @@ public class UploadPhotoHandler {
 		}
 	}
 
-	private String createDestKey(String srcKey, ZonedDateTime zdt, String uuid, String ext) {
-		return zdt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd-HH-mm-ss-A")) + "-" + Integer.toHexString(uuid.hashCode()) + "." + ext;
+	private String createDestKey(String srcKey, ZonedDateTime zdt, String ext) {
+		return zdt.format(DT_FORMATTER) + "-" + Integer.toHexString(UUID.randomUUID().toString().hashCode()) + "." + ext;
 	}
 
 	private static MediaType detect(InputStream inputStream) {
