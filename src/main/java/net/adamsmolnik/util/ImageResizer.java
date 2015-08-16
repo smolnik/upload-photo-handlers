@@ -4,10 +4,10 @@ import java.awt.Graphics2D;
 import java.awt.Image;
 import java.awt.Transparency;
 import java.awt.image.BufferedImage;
-import java.io.File;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.file.Files;
 
 import javax.imageio.ImageIO;
 
@@ -35,12 +35,12 @@ public class ImageResizer {
 		ratio = ((double) orgImg.getHeight()) / orgImg.getWidth();
 	}
 
-	public File resize() {
+	public ResizerResult resize() {
+		ByteArrayOutputStream baos = new ByteArrayOutputStream();
 		try {
-			File tempFile = Files.createTempFile(null, null).toFile();
-			ImageIO.write(doResize(orgImg, targetWidth, ratio), "jpg", tempFile);
-			tempFile.deleteOnExit();
-			return tempFile;
+			ImageIO.write(doResize(orgImg, targetWidth, ratio), "jpg", baos);
+			byte[] bytes = baos.toByteArray();
+			return new ResizerResult(bytes.length, new ByteArrayInputStream(bytes));
 		} catch (IOException e) {
 			throw new UploadPhotoHandlerException(e);
 		}

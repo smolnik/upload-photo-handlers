@@ -28,11 +28,13 @@ import com.amazonaws.services.lambda.runtime.LambdaLogger;
 import com.amazonaws.services.lambda.runtime.events.S3Event;
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3Client;
+import com.amazonaws.services.s3.model.ObjectMetadata;
 
 import net.adamsmolnik.handler.exception.UploadPhotoHandlerException;
 import net.adamsmolnik.handler.model.ImageMetadata;
 import net.adamsmolnik.util.ImageMetadataExplorer;
 import net.adamsmolnik.util.ImageResizer;
+import net.adamsmolnik.util.ResizerResult;
 
 /**
  * @author asmolnik
@@ -95,30 +97,36 @@ public class UploadPhotoHandler {
 		String srcKey = os.getKey();
 		log.log("File uploaded: " + os.getKey());
 		MediaType mediaType = detect(os.newCachedInputStream());
-		if ("jpeg".equals(mediaType.getSubtype())) {
-			ImageMetadata imd = new ImageMetadataExplorer().explore(os.newCachedInputStream());
-			ZonedDateTime zdt = ZonedDateTime.ofInstant(Instant.ofEpochMilli(imd.getPhotoTaken().getTime()), ZoneId.of("UTC"));
-			String userId = os.getUserId();
-			String userKeyPrefix = KEY_PREFIX + userId + "/";
-			String baseDestKey = createDestKey(srcKey, zdt, JPEG_EXT);
-			String photoKey = userKeyPrefix + baseDestKey;
-			String thumbnailKey = userKeyPrefix + "thumbnails/" + baseDestKey;
-
-			List<Future<?>> futures = Arrays.<Future<?>> asList(es.submit(() -> {
-				s3.copyObject(srcBucket, srcKey, ARCH_BUCKET, photoKey);
-			}), es.submit(() -> {
-				s3.putObject(DEST_BUCKET, thumbnailKey, new ImageResizer(os.newCachedInputStream(), THUMBNAIL_SIZE).resize());
-			}), es.submit(() -> {
-				s3.putObject(DEST_BUCKET, photoKey, new ImageResizer(os.newCachedInputStream(), WEB_IMAGE_SIZE).resize());
-			}));
-			await(futures);
-			PutRequest pr = new PutRequest().withUserId(userId).withPrincipalId(os.getPrincipalId()).withPhotoKey(photoKey)
-					.withThumbnailKey(thumbnailKey).withZonedDateTime(zdt).withImageMetadata(imd);
-			thlDb.get().putItem(createPutRequest(pr));
-		} else {
+		if (!"jpeg".equals(mediaType.getSubtype())) {
 			s3.copyObject(srcBucket, srcKey, "upload-unidentified", srcKey);
+			return;
 		}
-		s3.deleteObject(srcBucket, srcKey);
+		ImageMetadata imd = new ImageMetadataExplorer().explore(os.newCachedInputStream());
+		ZonedDateTime zdt = ZonedDateTime.ofInstant(Instant.ofEpochMilli(imd.getPhotoTaken().getTime()), ZoneId.of("UTC"));
+		String userId = os.getUserId();
+		String userKeyPrefix = KEY_PREFIX + userId + "/";
+		String baseDestKey = createDestKey(srcKey, zdt, JPEG_EXT);
+		String photoKey = userKeyPrefix + baseDestKey;
+		String thumbnailKey = userKeyPrefix + "thumbnails/" + baseDestKey;
+
+		List<Future<?>> futures = Arrays.<Future<?>> asList(es.submit(() -> {
+			s3.copyObject(srcBucket, srcKey, ARCH_BUCKET, photoKey);
+		}), es.submit(() -> {
+			putS3Object(thumbnailKey, new ImageResizer(os.newCachedInputStream(), THUMBNAIL_SIZE).resize());
+		}), es.submit(() -> {
+			putS3Object(photoKey, new ImageResizer(os.newCachedInputStream(), WEB_IMAGE_SIZE).resize());
+		}));
+		await(futures);
+		PutRequest pr = new PutRequest().withUserId(userId).withPrincipalId(os.getPrincipalId()).withPhotoKey(photoKey).withThumbnailKey(thumbnailKey)
+				.withZonedDateTime(zdt).withImageMetadata(imd);
+		thlDb.get().putItem(createPutRequest(pr));
+	}
+
+	private void putS3Object(String objectKey, ResizerResult rr) {
+		AmazonS3 s3 = new AmazonS3Client();
+		ObjectMetadata md = new ObjectMetadata();
+		md.setContentLength(rr.getSize());
+		s3.putObject(DEST_BUCKET, objectKey, rr.getInputStream(), md);
 	}
 
 	private PutItemRequest createPutRequest(PutRequest pr) {
