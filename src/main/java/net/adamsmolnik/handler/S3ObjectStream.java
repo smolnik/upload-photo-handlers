@@ -3,6 +3,9 @@ package net.adamsmolnik.handler;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 
 import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.AmazonS3Client;
@@ -18,7 +21,7 @@ import net.adamsmolnik.handler.exception.UploadPhotoHandlerException;
  */
 public class S3ObjectStream {
 
-	private final AmazonS3 s3 = new AmazonS3Client();
+	private final AmazonS3 s3;
 
 	private final String userId;
 
@@ -32,13 +35,22 @@ public class S3ObjectStream {
 
 	private final Object lock = new Object();
 
-	public S3ObjectStream(S3Entity s3Entity, UserIdentityEntity userIdentityEntity) {
+	public S3ObjectStream(S3Entity s3Entity, UserIdentityEntity userIdentityEntity, AmazonS3 s3) {
 		this.bucket = s3Entity.getBucket().getName();
 		S3ObjectEntity s3Object = s3Entity.getObject();
-		this.key = s3Object.getKey();
+		try {
+			this.key = URLDecoder.decode(s3Object.getKey().replace('+', ' '), StandardCharsets.UTF_8.name());
+		} catch (UnsupportedEncodingException e) {
+			throw new IllegalArgumentException(e);
+		}
 		this.size = s3Object.getSizeAsLong();
 		this.principalId = userIdentityEntity.getPrincipalId();
 		this.userId = mapIdentity(userIdentityEntity);
+		this.s3 = s3;
+	}
+
+	public S3ObjectStream(S3Entity s3Entity, UserIdentityEntity userIdentityEntity) {
+		this(s3Entity, userIdentityEntity, new AmazonS3Client());
 	}
 
 	private String mapIdentity(UserIdentityEntity userIdentityEntity) {

@@ -9,6 +9,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -80,7 +81,7 @@ public class UploadPhotoHandler {
 		try {
 			s3Event.getRecords().forEach(record -> {
 				try {
-					process(new S3ObjectStream(record.getS3(), record.getUserIdentity()), log, es);
+					process(new S3ObjectStream(record.getS3(), record.getUserIdentity(), thlS3.get()), log, es);
 				} catch (IOException e) {
 					throw new UploadPhotoHandlerException(e);
 				}
@@ -101,11 +102,12 @@ public class UploadPhotoHandler {
 			s3.copyObject(srcBucket, srcKey, "upload-unidentified", srcKey);
 			return;
 		}
-		ImageMetadata imd = new ImageMetadataExplorer().explore(os.newCachedInputStream());
-		ZonedDateTime zdt = ZonedDateTime.ofInstant(Instant.ofEpochMilli(imd.getPhotoTaken().getTime()), ZoneId.of("UTC"));
 		String userId = os.getUserId();
 		String userKeyPrefix = KEY_PREFIX + userId + "/";
-		String baseDestKey = createDestKey(srcKey, zdt, JPEG_EXT);
+		Optional<ImageMetadata> imd = new ImageMetadataExplorer().explore(os.newCachedInputStream());
+		ZonedDateTime zdt = imd.isPresent() && imd.get().getPhotoTaken().isPresent()
+				? ZonedDateTime.ofInstant(Instant.ofEpochMilli(imd.get().getPhotoTaken().get().getTime()), ZoneId.of("UTC")) : ZonedDateTime.now();
+		String baseDestKey = createDestKey(zdt, JPEG_EXT);
 		String photoKey = userKeyPrefix + baseDestKey;
 		String thumbnailKey = userKeyPrefix + "thumbnails/" + baseDestKey;
 
@@ -118,7 +120,7 @@ public class UploadPhotoHandler {
 		}));
 		await(futures);
 		PutRequest pr = new PutRequest().withUserId(userId).withPrincipalId(os.getPrincipalId()).withPhotoKey(photoKey).withThumbnailKey(thumbnailKey)
-				.withZonedDateTime(zdt).withImageMetadata(imd);
+				.withZonedDateTime(zdt).withImageMetadata(imd).withSrcPhotoName(srcKey);
 		thlDb.get().putItem(createPutRequest(pr));
 	}
 
@@ -130,12 +132,31 @@ public class UploadPhotoHandler {
 	}
 
 	private PutItemRequest createPutRequest(PutRequest pr) {
-		return new PutItemRequest().withTableName("photos").addItemEntry("userId", new AttributeValue(pr.userId))
+		PutItemRequest req = new PutItemRequest().withTableName("photos").addItemEntry("userId", new AttributeValue(pr.userId))
 				.addItemEntry("photoTakenDate", new AttributeValue(pr.zdt.format(DateTimeFormatter.ISO_LOCAL_DATE)))
 				.addItemEntry("photoTakenTime", new AttributeValue(pr.zdt.format(DateTimeFormatter.ISO_LOCAL_TIME)))
 				.addItemEntry("photoKey", new AttributeValue(pr.photoKey)).addItemEntry("thumbnailKey", new AttributeValue(pr.thumbnailKey))
-				.addItemEntry("bucket", new AttributeValue(DEST_BUCKET)).addItemEntry("madeBy", new AttributeValue(pr.imd.getMadeBy()))
-				.addItemEntry("model", new AttributeValue(pr.imd.getModel())).addItemEntry("principalId", new AttributeValue(pr.principalId));
+				.addItemEntry("bucket", new AttributeValue(DEST_BUCKET)).addItemEntry("principalId", new AttributeValue(pr.principalId))
+				.addItemEntry("srcPhotoName", new AttributeValue(pr.srcPhotoName));
+		if (pr.imageMetadata.isPresent()) {
+			ImageMetadata imd = pr.imageMetadata.get();
+			addOptinalItemEntry(req, "madeBy", imd.getMadeBy());
+			addOptinalItemEntry(req, "model", imd.getModel());
+			if (!imd.getPhotoTaken().isPresent()) {
+				req.addItemEntry("warning",
+						new AttributeValue("Missing photo taken date - date/time of the upload event has been used as a default"));
+			}
+		} else {
+			req.addItemEntry("warning", new AttributeValue("Missing photo/image metadata to extract"));
+		}
+		return req;
+	}
+
+	private PutItemRequest addOptinalItemEntry(PutItemRequest req, String attrName, Optional<String> attrValue) {
+		if (!attrValue.isPresent()) {
+			return req;
+		}
+		return req.addItemEntry(attrName, new AttributeValue(attrValue.get()));
 	}
 
 	private void await(List<Future<?>> futures) {
@@ -152,7 +173,7 @@ public class UploadPhotoHandler {
 		}
 	}
 
-	private String createDestKey(String srcKey, ZonedDateTime zdt, String ext) {
+	private String createDestKey(ZonedDateTime zdt, String ext) {
 		return zdt.format(DT_FORMATTER) + "-" + Integer.toHexString(UUID.randomUUID().toString().hashCode()) + "." + ext;
 	}
 
