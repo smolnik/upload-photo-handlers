@@ -20,7 +20,6 @@ import org.apache.tika.io.TikaInputStream;
 import org.apache.tika.metadata.Metadata;
 import org.apache.tika.mime.MediaType;
 
-import com.amazonaws.services.dynamodbv2.AmazonDynamoDB;
 import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
 import com.amazonaws.services.dynamodbv2.model.AttributeValue;
 import com.amazonaws.services.dynamodbv2.model.PutItemRequest;
@@ -57,31 +56,14 @@ public class UploadPhotoHandler {
 
 	private static final int WEB_IMAGE_SIZE = 1080;
 
-	private static final ThreadLocal<AmazonS3> thlS3 = new ThreadLocal<AmazonS3>() {
-
-		@Override
-		protected AmazonS3 initialValue() {
-			return new AmazonS3Client();
-		}
-
-	};
-
-	private static final ThreadLocal<AmazonDynamoDB> thlDb = new ThreadLocal<AmazonDynamoDB>() {
-
-		@Override
-		protected AmazonDynamoDB initialValue() {
-			return new AmazonDynamoDBClient();
-		}
-
-	};
-
 	public void handle(S3Event s3Event, Context context) {
 		LambdaLogger log = context.getLogger();
 		ExecutorService es = Executors.newCachedThreadPool();
+		AmazonS3 s3 = new AmazonS3Client();
 		try {
 			s3Event.getRecords().forEach(record -> {
 				try {
-					process(new S3ObjectStream(record.getS3(), record.getUserIdentity(), thlS3.get()), log, es);
+					process(new S3ObjectStream(record.getS3(), record.getUserIdentity(), s3), log, es, s3);
 				} catch (IOException e) {
 					throw new UploadPhotoHandlerException(e);
 				}
@@ -92,8 +74,7 @@ public class UploadPhotoHandler {
 
 	}
 
-	private void process(S3ObjectStream os, LambdaLogger log, ExecutorService es) throws IOException {
-		final AmazonS3 s3 = thlS3.get();
+	private void process(S3ObjectStream os, LambdaLogger log, ExecutorService es, AmazonS3 s3) throws IOException {
 		String srcBucket = os.getBucket();
 		String srcKey = os.getKey();
 		log.log("File uploaded: " + os.getKey());
@@ -114,20 +95,21 @@ public class UploadPhotoHandler {
 		List<Future<?>> futures = Arrays.<Future<?>> asList(es.submit(() -> {
 			s3.copyObject(srcBucket, srcKey, ARCH_BUCKET, photoKey);
 		}), es.submit(() -> {
-			putS3Object(thumbnailKey, new ImageResizer(os.newCachedInputStream(), THUMBNAIL_SIZE).resize());
+			putS3Object(thumbnailKey, new ImageResizer(os.newCachedInputStream(), THUMBNAIL_SIZE).resize(), mediaType);
 		}), es.submit(() -> {
-			putS3Object(photoKey, new ImageResizer(os.newCachedInputStream(), WEB_IMAGE_SIZE).resize());
+			putS3Object(photoKey, new ImageResizer(os.newCachedInputStream(), WEB_IMAGE_SIZE).resize(), mediaType);
 		}));
 		await(futures);
 		PutRequest pr = new PutRequest().withUserId(userId).withPrincipalId(os.getPrincipalId()).withPhotoKey(photoKey).withThumbnailKey(thumbnailKey)
 				.withZonedDateTime(zdt).withImageMetadata(imd).withSrcPhotoName(srcKey);
-		thlDb.get().putItem(createPutRequest(pr));
+		new AmazonDynamoDBClient().putItem(createPutRequest(pr));
 	}
 
-	private void putS3Object(String objectKey, ResizerResult rr) {
+	private void putS3Object(String objectKey, ResizerResult rr, MediaType mt) {
 		AmazonS3 s3 = new AmazonS3Client();
 		ObjectMetadata md = new ObjectMetadata();
 		md.setContentLength(rr.getSize());
+		md.setContentType(mt.toString());
 		s3.putObject(DEST_BUCKET, objectKey, rr.getInputStream(), md);
 	}
 
