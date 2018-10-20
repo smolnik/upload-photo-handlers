@@ -42,7 +42,7 @@ import net.adamsmolnik.handler.util.ResizerResult;
  */
 public class UploadPhotoHandler {
 
-	private static final String DEST_BUCKET = "smolnik.photos";
+	private static final String DEST_BUCKET = "photos.adamsmolnik.com";
 
 	private static final String KEY_PREFIX = "photos/";
 
